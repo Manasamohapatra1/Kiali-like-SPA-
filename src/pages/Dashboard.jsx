@@ -6,7 +6,10 @@ import ReactFlow, {
   useNodesState,
   useEdgesState,
   addEdge,
+  ReactFlowProvider,
+  useReactFlow,
 } from "react-flow-renderer";
+
 import {
   Box,
   Button,
@@ -38,6 +41,81 @@ const modalStyle = {
   overflowY: "auto",
 };
 
+// Import statements same as before
+
+const GraphCanvas = ({
+  nodes,
+  edges,
+  onNodesChange,
+  onEdgesChange,
+  setEdges,
+  searchTerm,
+  onAddNodeCentered,
+}) => {
+  const { getViewport, project } = useReactFlow();
+
+  const filteredNodes = nodes.filter((node) =>
+    node.data.label.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  const filteredEdges = edges.filter((edge) =>
+    filteredNodes.some(
+      (node) => node.id === edge.source || node.id === edge.target
+    )
+  );
+
+  useEffect(() => {
+    // Expose centering to parent when ready
+    onAddNodeCentered(() => (label) => {
+      const { x: offsetX, y: offsetY, zoom } = getViewport();
+
+      const centerX = window.innerWidth / 2;
+      const centerY = 500 / 2; // assuming canvas height ~500px
+
+      const position = project({
+        x: centerX - offsetX,
+        y: centerY - offsetY,
+      });
+
+      const id = (Date.now() + Math.random()).toString();
+      const newNode = {
+        id,
+        position,
+        data: { label, traffic: "N/A", latency: "N/A" },
+      };
+      return newNode;
+    });
+  }, []);
+
+  return (
+    <Box
+      sx={{
+        height: "60vh",
+        width: "100%",
+        backgroundColor: "#f0f0f0",
+        borderRadius: 2,
+      }}
+    >
+      <ReactFlow
+        nodes={filteredNodes}
+        edges={filteredEdges}
+        onNodesChange={onNodesChange}
+        onEdgesChange={onEdgesChange}
+        onConnect={(params) =>
+          setEdges((eds) =>
+            addEdge({ ...params, animated: true, label: "Auto" }, eds)
+          )
+        }
+        fitView
+      >
+        <MiniMap />
+        <Controls />
+        <Background gap={12} color="#aaa" />
+      </ReactFlow>
+    </Box>
+  );
+};
+
 const Dashboard = () => {
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
@@ -46,48 +124,25 @@ const Dashboard = () => {
   const [nodeModalOpen, setNodeModalOpen] = useState(false);
   const [edgeModalOpen, setEdgeModalOpen] = useState(false);
 
+  const [getCenteredNodeFunc, setCenteredNodeFunc] = useState(null);
+
   useEffect(() => {
-    const saved = JSON.parse(localStorage.getItem(LOCAL_KEY));
+    const saved = JSON.parse(localStorage.getItem("kiali_graph_data"));
     if (saved) {
       setNodes(saved.nodes || []);
       setEdges(saved.edges || []);
-    } else {
-      setNodes([
-        {
-          id: "1",
-          position: { x: 100, y: 100 },
-          data: { label: "Service 1", traffic: "80%", latency: "120ms" },
-        },
-        {
-          id: "2",
-          position: { x: 400, y: 100 },
-          data: { label: "Service 2", traffic: "60%", latency: "90ms" },
-        },
-      ]);
-      setEdges([
-        {
-          id: "e1-2",
-          source: "1",
-          target: "2",
-          label: "20 RPS",
-          animated: true,
-        },
-      ]);
     }
   }, []);
 
   useEffect(() => {
-    localStorage.setItem(LOCAL_KEY, JSON.stringify({ nodes, edges }));
+    localStorage.setItem("kiali_graph_data", JSON.stringify({ nodes, edges }));
   }, [nodes, edges]);
 
   const onAddNode = (label) => {
-    const id = (Date.now() + Math.random()).toString();
-    const newNode = {
-      id,
-      position: { x: Math.random() * 400 + 50, y: Math.random() * 300 + 50 },
-      data: { label, traffic: "N/A", latency: "N/A" },
-    };
-    setNodes((prev) => [...prev, newNode]);
+    if (getCenteredNodeFunc) {
+      const newNode = getCenteredNodeFunc(label);
+      setNodes((prev) => [...prev, newNode]);
+    }
   };
 
   const onRemoveNode = (id) => {
@@ -105,8 +160,10 @@ const Dashboard = () => {
 
   const onAddEdge = (source, target) => {
     const id = `e${source}-${target}`;
-    const newEdge = { id, source, target, label: "Auto", animated: true };
-    setEdges((prev) => [...prev, newEdge]);
+    setEdges((prev) => [
+      ...prev,
+      { id, source, target, label: "Auto", animated: true },
+    ]);
   };
 
   const onRemoveEdge = (id) => {
@@ -118,16 +175,6 @@ const Dashboard = () => {
       prev.map((e) => (e.id === id ? { ...e, label: newLabel } : e))
     );
   };
-
-  const filteredNodes = nodes.filter((node) =>
-    node.data.label.toLowerCase().includes(searchTerm.toLowerCase())
-  );
-
-  const filteredEdges = edges.filter((edge) =>
-    filteredNodes.some(
-      (node) => node.id === edge.source || node.id === edge.target
-    )
-  );
 
   return (
     <MainLayout>
@@ -145,11 +192,7 @@ const Dashboard = () => {
       />
 
       <Stack direction="row" spacing={2} sx={{ mb: 3 }}>
-        <Button
-          variant="contained"
-          color="primary"
-          onClick={() => setNodeModalOpen(true)}
-        >
+        <Button variant="contained" onClick={() => setNodeModalOpen(true)}>
           Manage Services
         </Button>
         <Button
@@ -206,39 +249,17 @@ const Dashboard = () => {
         </Box>
       </Modal>
 
-      {/* Graph Canvas */}
-      <Box
-        sx={{
-          height: "60vh",
-          width: "100%",
-          backgroundColor: "#f0f0f0",
-          boxShadow: 1,
-          borderRadius: 2,
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          px: 2,
-        }}
-      >
-        <Box sx={{ height: "100%", width: "100%" }}>
-          <ReactFlow
-            nodes={filteredNodes}
-            edges={filteredEdges}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onConnect={(params) =>
-              setEdges((eds) =>
-                addEdge({ ...params, animated: true, label: "Auto" }, eds)
-              )
-            }
-            fitView
-          >
-            <MiniMap />
-            <Controls />
-            <Background gap={12} color="#aaa" />
-          </ReactFlow>
-        </Box>
-      </Box>
+      <ReactFlowProvider>
+        <GraphCanvas
+          nodes={nodes}
+          edges={edges}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          setEdges={setEdges}
+          searchTerm={searchTerm}
+          onAddNodeCentered={setCenteredNodeFunc}
+        />
+      </ReactFlowProvider>
     </MainLayout>
   );
 };
